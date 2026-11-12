@@ -1,0 +1,54 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Pinned build image, so the binary is byte-for-byte reproducible.
+  BASE_IMAGE: solanafoundation/solana-verifiable-build@sha256:16053d845922e798ab1852d3fe222faf5a23eeb1db3a13d30b70d6b6e82184ae
+
+jobs:
+  verifiable-build:
+    name: Verifiable build (solana-verify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      - name: Install solana-verify
+        run: cargo install solana-verify --locked
+      - name: Build in the pinned Docker image
+        run: solana-verify build --library-name boop_program --base-image "$BASE_IMAGE"
+      - name: Executable hash
+        run: |
+          HASH=$(solana-verify get-executable-hash target/deploy/boop_program.so)
+          echo "$HASH  boop_program.so" > executable-hash.txt
+          echo "### boop_program.so executable hash" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$HASH" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "boop_program.so executable hash: $HASH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boop-verifiable-build
+          path: |
+            target/deploy/boop_program.so
+            executable-hash.txt
+
+  tests:
+    name: Unit tests (mainnet and devnet configurations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --features devnet
